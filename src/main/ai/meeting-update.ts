@@ -57,9 +57,9 @@ export async function generateMeetingUpdate(
     case 'anthropic':
       return await runAnthropicMeetingUpdate(input, settings)
     case 'openai':
-      throw new Error('OpenAI provider is not implemented yet.')
+      return await runOpenAiMeetingUpdate(input, settings)
     case 'openrouter':
-      throw new Error('OpenRouter provider is not implemented yet.')
+      return await runOpenRouterMeetingUpdate(input, settings)
     case 'ollama':
       return await runOllamaMeetingUpdate(input, settings)
     default:
@@ -100,6 +100,117 @@ async function runAnthropicMeetingUpdate(
 
   if (!text) {
     throw new Error('Anthropic returned an empty response.')
+  }
+
+  const parsed = parseMeetingUpdateResponse(text, input.agenda)
+  return {
+    summary: parsed.summary,
+    agenda: parsed.agenda,
+    modelUsed: model
+  }
+}
+
+async function runOpenAiMeetingUpdate(
+  input: MeetingUpdateInput,
+  settings: AppSettings['ai']
+): Promise<MeetingUpdateOutput> {
+  const apiKey = settings.openaiApiKey.trim()
+  if (!apiKey) {
+    throw new Error('OpenAI API key is missing in Settings.')
+  }
+
+  const model = (settings.model || PROVIDER_DEFAULT_MODEL.openai).trim()
+  const userPrompt = buildUserPrompt(input)
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ]
+    }),
+    signal: AbortSignal.timeout(60_000)
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`OpenAI request failed (${response.status}): ${body || response.statusText}`)
+  }
+
+  const payload = (await response.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string | Array<{ type?: string; text?: string }>
+      }
+    }>
+  }
+
+  const rawContent = payload.choices?.[0]?.message?.content
+  const text = extractAssistantText(rawContent).trim()
+  if (!text) {
+    throw new Error('OpenAI returned an empty response.')
+  }
+
+  const parsed = parseMeetingUpdateResponse(text, input.agenda)
+  return {
+    summary: parsed.summary,
+    agenda: parsed.agenda,
+    modelUsed: model
+  }
+}
+
+async function runOpenRouterMeetingUpdate(
+  input: MeetingUpdateInput,
+  settings: AppSettings['ai']
+): Promise<MeetingUpdateOutput> {
+  const apiKey = settings.openrouterApiKey.trim()
+  if (!apiKey) {
+    throw new Error('OpenRouter API key is missing in Settings.')
+  }
+
+  const model = (settings.model || PROVIDER_DEFAULT_MODEL.openrouter).trim()
+  const userPrompt = buildUserPrompt(input)
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://github.com/OpenAbilityLabs/MeetMate',
+      'X-Title': 'MeetMate'
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ]
+    }),
+    signal: AbortSignal.timeout(60_000)
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`OpenRouter request failed (${response.status}): ${body || response.statusText}`)
+  }
+
+  const payload = (await response.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string | Array<{ type?: string; text?: string }>
+      }
+    }>
+  }
+  const rawContent = payload.choices?.[0]?.message?.content
+  const text = extractAssistantText(rawContent).trim()
+  if (!text) {
+    throw new Error('OpenRouter returned an empty response.')
   }
 
   const parsed = parseMeetingUpdateResponse(text, input.agenda)
@@ -207,4 +318,15 @@ function formatTimestamp(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function extractAssistantText(
+  content: string | Array<{ type?: string; text?: string }> | undefined
+): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text as string)
+    .join('\n')
 }
