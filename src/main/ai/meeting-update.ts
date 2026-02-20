@@ -61,7 +61,7 @@ export async function generateMeetingUpdate(
     case 'openrouter':
       throw new Error('OpenRouter provider is not implemented yet.')
     case 'ollama':
-      throw new Error('Ollama provider is not implemented yet.')
+      return await runOllamaMeetingUpdate(input, settings)
     default:
       throw new Error('Unknown AI provider configuration.')
   }
@@ -100,6 +100,64 @@ async function runAnthropicMeetingUpdate(
 
   if (!text) {
     throw new Error('Anthropic returned an empty response.')
+  }
+
+  const parsed = parseMeetingUpdateResponse(text, input.agenda)
+  return {
+    summary: parsed.summary,
+    agenda: parsed.agenda,
+    modelUsed: model
+  }
+}
+
+async function runOllamaMeetingUpdate(
+  input: MeetingUpdateInput,
+  settings: AppSettings['ai']
+): Promise<MeetingUpdateOutput> {
+  const model = (settings.model || PROVIDER_DEFAULT_MODEL.ollama).trim()
+  const baseUrl = (settings.ollamaBaseUrl || 'http://127.0.0.1:11434').trim().replace(/\/+$/, '')
+  if (!baseUrl) {
+    throw new Error('Ollama base URL is missing in Settings.')
+  }
+
+  const userPrompt = buildUserPrompt(input)
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  }
+  const apiKey = settings.ollamaApiKey.trim()
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+
+  const response = await fetch(`${baseUrl}/api/chat`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      stream: false,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ],
+      options: {
+        temperature: 0.2
+      }
+    }),
+    signal: AbortSignal.timeout(60_000)
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`Ollama request failed (${response.status}): ${body || response.statusText}`)
+  }
+
+  const payload = (await response.json()) as {
+    message?: { content?: string }
+    response?: string
+  }
+  const text = (payload.message?.content || payload.response || '').trim()
+  if (!text) {
+    throw new Error('Ollama returned an empty response.')
   }
 
   const parsed = parseMeetingUpdateResponse(text, input.agenda)
