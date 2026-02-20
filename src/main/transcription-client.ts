@@ -10,6 +10,8 @@ import { WebContents } from 'electron'
 const PYTHON_WS_URL = 'ws://127.0.0.1:8765/ws'
 const CONNECT_TIMEOUT_MS = 5_000
 const STOP_TIMEOUT_MS = 60_000
+const START_RETRY_WINDOW_MS = 12_000
+const RETRY_DELAY_MS = 400
 
 let activeWs: WebSocket | null = null
 
@@ -49,83 +51,89 @@ export function startTranscriptionWs(
   webContents: WebContents,
   onSegment: (payload: SegmentPayload) => void
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Close any stale connection
-    if (activeWs) {
-      activeWs.removeAllListeners()
-      activeWs.close()
-      activeWs = null
-    }
+  return withRetry<void>(
+    () =>
+      new Promise((resolve, reject) => {
+        // Close any stale connection
+        if (activeWs) {
+          activeWs.removeAllListeners()
+          activeWs.close()
+          activeWs = null
+        }
 
-    const ws = new WebSocket(PYTHON_WS_URL)
-    activeWs = ws
+        const ws = new WebSocket(PYTHON_WS_URL)
+        activeWs = ws
 
-    const timeout = setTimeout(() => {
-      ws.removeAllListeners()
-      ws.close()
-      activeWs = null
-      reject(new Error('Timed out connecting to transcription service'))
-    }, CONNECT_TIMEOUT_MS)
+        const timeout = setTimeout(() => {
+          ws.removeAllListeners()
+          ws.close()
+          activeWs = null
+          reject(new Error('Timed out connecting to transcription service'))
+        }, CONNECT_TIMEOUT_MS)
 
-    ws.on('open', () => {
-      ws.send(JSON.stringify({
-        type: 'start',
-        session_id: String(sessionId),
-        output_path: outputPath,
-        input_device_id: inputDeviceId,
-        transcription_mode: transcriptionMode,
-        diarization_enabled: diarizationEnabled,
-        huggingface_token: huggingFaceToken,
-        local_diarization_model_path: localDiarizationModelPath,
-        deepgram_api_key: deepgramApiKey,
-        deepgram_model: deepgramModel
-      }))
-    })
-
-    ws.on('message', (raw: Buffer) => {
-      let msg: Record<string, unknown>
-      try {
-        msg = JSON.parse(raw.toString())
-      } catch {
-        return
-      }
-
-      if (msg.type === 'ready') {
-        clearTimeout(timeout)
-        // Push recording-state change to renderer
-        webContents.send('transcription:state', { recording: true })
-        resolve()
-        return
-      }
-
-      if (msg.type === 'segment') {
-        onSegment({
-          speaker: msg.speaker as string,
-          text: msg.text as string,
-          start_ms: msg.start_ms as number,
-          end_ms: msg.end_ms as number
+        ws.on('open', () => {
+          ws.send(
+            JSON.stringify({
+              type: 'start',
+              session_id: String(sessionId),
+              output_path: outputPath,
+              input_device_id: inputDeviceId,
+              transcription_mode: transcriptionMode,
+              diarization_enabled: diarizationEnabled,
+              huggingface_token: huggingFaceToken,
+              local_diarization_model_path: localDiarizationModelPath,
+              deepgram_api_key: deepgramApiKey,
+              deepgram_model: deepgramModel
+            })
+          )
         })
-        return
-      }
 
-      if (msg.type === 'error') {
-        clearTimeout(timeout)
-        reject(new Error(String(msg.message ?? 'Unknown error from transcription service')))
-      }
-    })
+        ws.on('message', (raw: Buffer) => {
+          let msg: Record<string, unknown>
+          try {
+            msg = JSON.parse(raw.toString())
+          } catch {
+            return
+          }
 
-    ws.on('error', (err: Error) => {
-      clearTimeout(timeout)
-      activeWs = null
-      webContents.send('transcription:state', { recording: false })
-      reject(err)
-    })
+          if (msg.type === 'ready') {
+            clearTimeout(timeout)
+            // Push recording-state change to renderer
+            webContents.send('transcription:state', { recording: true })
+            resolve()
+            return
+          }
 
-    ws.on('close', () => {
-      activeWs = null
-      webContents.send('transcription:state', { recording: false })
-    })
-  })
+          if (msg.type === 'segment') {
+            onSegment({
+              speaker: msg.speaker as string,
+              text: msg.text as string,
+              start_ms: msg.start_ms as number,
+              end_ms: msg.end_ms as number
+            })
+            return
+          }
+
+          if (msg.type === 'error') {
+            clearTimeout(timeout)
+            reject(new Error(String(msg.message ?? 'Unknown error from transcription service')))
+          }
+        })
+
+        ws.on('error', (err: Error) => {
+          clearTimeout(timeout)
+          activeWs = null
+          webContents.send('transcription:state', { recording: false })
+          reject(err)
+        })
+
+        ws.on('close', () => {
+          activeWs = null
+          webContents.send('transcription:state', { recording: false })
+        })
+      }),
+    START_RETRY_WINDOW_MS
+  )
 }
 
 /**
@@ -179,48 +187,84 @@ export function isTranscribing(): boolean {
 }
 
 export function listInputDevicesWs(): Promise<InputDevicePayload[]> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(PYTHON_WS_URL)
+  return withRetry<InputDevicePayload[]>(
+    () =>
+      new Promise((resolve, reject) => {
+        const ws = new WebSocket(PYTHON_WS_URL)
 
-    const timeout = setTimeout(() => {
-      ws.removeAllListeners()
-      ws.close()
-      reject(new Error('Timed out querying transcription input devices'))
-    }, CONNECT_TIMEOUT_MS)
+        const timeout = setTimeout(() => {
+          ws.removeAllListeners()
+          ws.close()
+          reject(new Error('Timed out querying transcription input devices'))
+        }, CONNECT_TIMEOUT_MS)
 
-    ws.on('open', () => {
-      ws.send(JSON.stringify({ type: 'list_inputs' }))
-    })
+        ws.on('open', () => {
+          ws.send(JSON.stringify({ type: 'list_inputs' }))
+        })
 
-    ws.on('message', (raw: Buffer) => {
-      let msg: Record<string, unknown>
-      try {
-        msg = JSON.parse(raw.toString())
-      } catch {
-        return
+        ws.on('message', (raw: Buffer) => {
+          let msg: Record<string, unknown>
+          try {
+            msg = JSON.parse(raw.toString())
+          } catch {
+            return
+          }
+
+          if (msg.type === 'inputs') {
+            clearTimeout(timeout)
+            ws.close()
+            resolve((msg.devices as InputDevicePayload[] | undefined) ?? [])
+            return
+          }
+
+          if (msg.type === 'error') {
+            clearTimeout(timeout)
+            ws.close()
+            reject(new Error(String(msg.message ?? 'Unknown error from transcription service')))
+          }
+        })
+
+        ws.on('error', (err: Error) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
+
+        ws.on('close', () => {
+          clearTimeout(timeout)
+        })
+      }),
+    START_RETRY_WINDOW_MS
+  )
+}
+
+async function withRetry<T>(operation: () => Promise<T>, windowMs: number): Promise<T> {
+  const deadline = Date.now() + windowMs
+  let lastError: unknown = null
+
+  while (Date.now() < deadline) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+      if (!isRetryableConnectionError(error)) {
+        throw error
       }
+      await delay(RETRY_DELAY_MS)
+    }
+  }
 
-      if (msg.type === 'inputs') {
-        clearTimeout(timeout)
-        ws.close()
-        resolve((msg.devices as InputDevicePayload[] | undefined) ?? [])
-        return
-      }
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+  throw new Error('Transcription service not reachable.')
+}
 
-      if (msg.type === 'error') {
-        clearTimeout(timeout)
-        ws.close()
-        reject(new Error(String(msg.message ?? 'Unknown error from transcription service')))
-      }
-    })
+function isRetryableConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const msg = error.message.toUpperCase()
+  return msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('TIMED OUT')
+}
 
-    ws.on('error', (err: Error) => {
-      clearTimeout(timeout)
-      reject(err)
-    })
-
-    ws.on('close', () => {
-      clearTimeout(timeout)
-    })
-  })
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

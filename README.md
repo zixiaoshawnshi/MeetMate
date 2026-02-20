@@ -111,6 +111,9 @@ npm run build
 npm run package
 ```
 
+Packaged builds include the `python/` service files and auto-start the transcription service on app launch.
+Current requirement: Python runtime and required Python packages must still be available on the target machine.
+
 ## Notes
 
 - App data is stored locally in SQLite via `better-sqlite3`.

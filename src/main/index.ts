@@ -5,6 +5,7 @@ import { registerSessionHandlers } from './ipc/sessions'
 import { registerRecordingHandlers } from './ipc/recordings'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerAiHandlers } from './ipc/ai'
+import { startPythonService, stopPythonService } from './python-service'
 import {
   registerTranscriptionHandlers,
   stopActiveTranscriptionForShutdown
@@ -77,6 +78,7 @@ function setupApplicationMenu(): void {
 }
 
 app.whenReady().then(() => {
+  startPythonService()
   initDatabase()
   registerSessionHandlers()
   registerRecordingHandlers()
@@ -96,7 +98,7 @@ app.on('before-quit', (event) => {
   if (shuttingDown) return
   shuttingDown = true
   event.preventDefault()
-  void stopActiveTranscriptionForShutdown().finally(() => {
+  void stopActiveTranscriptionForShutdown().then(stopPythonService).finally(() => {
     app.quit()
   })
 })
