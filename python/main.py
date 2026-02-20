@@ -1,5 +1,5 @@
-﻿"""
-MeetMate transcription service.
+"""
+MeetR transcription service.
 Runs a plain WebSocket server on ws://127.0.0.1:8765
 
 Message protocol
@@ -207,7 +207,7 @@ async def handle_client(ws) -> None:
 
 
 async def main() -> None:
-    log.info("MeetMate transcription service starting on port %d", PORT)
+    log.info("MeetR transcription service starting on port %d", PORT)
     async with websockets.serve(handle_client, "127.0.0.1", PORT):
         log.info("Listening on ws://127.0.0.1:%d - press Ctrl+C to stop", PORT)
         await asyncio.Future()  # run forever
@@ -215,3 +215,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+

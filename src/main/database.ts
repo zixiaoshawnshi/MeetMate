@@ -10,7 +10,7 @@ export function getDb(): Database.Database {
 
 export function initDatabase(): void {
   const userDataPath = app.getPath('userData')
-  const dbPath = join(userDataPath, 'meetmate.db')
+  const dbPath = join(userDataPath, 'meetr.db')
 
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
@@ -69,3 +69,4 @@ export function initDatabase(): void {
     );
   `)
 }
+

@@ -57,8 +57,9 @@ export default function Toolbar({
     <div className="flex flex-col shrink-0">
       <div className="flex items-center gap-3 px-4 h-12 bg-gray-900 border-b border-gray-700">
         <div className="flex items-center gap-2 shrink-0">
-          <div className="w-7 h-7 rounded-md bg-blue-600 flex items-center justify-center">
-            <span className="text-white text-xs font-bold">MM</span>
+          <div className="w-7 h-7 rounded-md bg-blue-600 flex items-center justify-center relative overflow-hidden">
+            <span className="text-white text-sm font-extrabold italic leading-none translate-x-[0.5px]">R</span>
+            <span className="absolute bottom-1 right-1 w-2 h-[2px] bg-white/85 rotate-[-35deg]" />
           </div>
         </div>
 

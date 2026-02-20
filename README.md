@@ -1,10 +1,10 @@
-# MeetMate
+# MeetR
 
-MeetMate is a privacy-first desktop meeting assistant for structured in-person sessions.
+MeetR is a privacy-first desktop meeting assistant for structured in-person sessions.
 
 ## Privacy First
 
-MeetMate can run fully local:
+MeetR can run fully local:
 - local transcription service (Python)
 - local data storage (SQLite)
 - local recordings (WAV files)
@@ -120,3 +120,4 @@ npm run package
 ## Design Doc
 
 See [`DESIGN.md`](DESIGN.md) for product/phase details.
+

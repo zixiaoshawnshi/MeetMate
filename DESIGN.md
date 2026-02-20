@@ -1,4 +1,4 @@
-# MeetMate — Design Document
+# MeetR �?Design Document
 
 **Version:** 0.1
 **Date:** 2026-02-18
@@ -8,9 +8,9 @@
 
 ## 1. Purpose
 
-MeetMate is a desktop meeting assistant designed to support structured, in-person interview and consultation sessions. Its primary use case is **smart home design interviews with disability families** conducted by occupational therapists or assistive technology specialists, but the tool is intentionally generalized for any in-person meeting that benefits from live transcription, structured notes, and AI-assisted agenda management.
+MeetR is a desktop meeting assistant designed to support structured, in-person interview and consultation sessions. Its primary use case is **smart home design interviews with disability families** conducted by occupational therapists or assistive technology specialists, but the tool is intentionally generalized for any in-person meeting that benefits from live transcription, structured notes, and AI-assisted agenda management.
 
-The core goal is not just to record what happened — it is to **keep the meeting on track** and produce a **structured, usable output** at the end.
+The core goal is not just to record what happened �?it is to **keep the meeting on track** and produce a **structured, usable output** at the end.
 
 ---
 
@@ -24,7 +24,7 @@ The core goal is not just to record what happened — it is to **keep the meetin
 
 ### 2.2 Manual Notes
 - A free-text area for attendees or the facilitator to type notes during the meeting.
-- Persisted continuously to the local database — no manual save needed.
+- Persisted continuously to the local database �?no manual save needed.
 - Included as context when the AI generates a summary.
 
 ### 2.3 Agenda
@@ -43,11 +43,11 @@ The core goal is not just to record what happened — it is to **keep the meetin
   ```
 
 ### 2.5 Audio Recording
-- The session audio is recorded to a local file simultaneously with transcription — no extra mic capture needed, same stream.
+- The session audio is recorded to a local file simultaneously with transcription �?no extra mic capture needed, same stream.
 - Recording starts and stops with the session (tied to the Record/Stop button).
-- Stored as a WAV file (lossless, no encoding overhead during capture). At 16kHz mono 16-bit, a 1-hour session is ~115MB — acceptable for local storage.
+- Stored as a WAV file (lossless, no encoding overhead during capture). At 16kHz mono 16-bit, a 1-hour session is ~115MB �?acceptable for local storage.
 - File path is stored in the session record; the file itself lives in a per-session folder alongside exports.
-- Intended use: **QA review of initial assessments** — the facilitator or supervisor can replay the meeting audio after the fact.
+- Intended use: **QA review of initial assessments** �?the facilitator or supervisor can replay the meeting audio after the fact.
 - **Consent notice:** Because this use case involves disability families, the UI must display a visible recording indicator (red dot + "Recording" label in the toolbar) for the full duration of the session. A brief consent acknowledgement prompt should appear before recording begins.
 - **Synchronized playback (future):** Because transcript segments have `start_ms` timestamps, a future version could allow clicking a transcript line to seek to that position in the audio. This is not in scope for v1 but the data model supports it.
 
@@ -67,22 +67,22 @@ The core goal is not just to record what happened — it is to **keep the meetin
 Four panels arranged as three columns on top and a full-width panel on the bottom:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  MeetMate  [Session Title]    [● Recording]  [■ Stop]  [✦ AI Update]│
-├─────────────────┬───────────────────┬───────────────────────┤
-│     AGENDA      │   TRANSCRIPTION   │    MANUAL NOTES       │
-│                 │                   │                       │
-│ - [ ] Item 1   │ 00:01 [Spk 1]     │  (free text)          │
-│   - [ ] Sub    │ Hello, today...   │                       │
-│ - [x] Item 2   │ 00:34 [Spk 2]     │                       │
-│                 │ We need to...     │                       │
-│ [+ Add item]   │                   │                       │
-│ [Edit]         │                   │                       │
-├─────────────────┴───────────────────┴───────────────────────┤
-│  AI SUMMARY                              Last updated: 02:34 │
-│  Key points: ...   Decisions: ...   Open questions: ...      │
-│  [▼ Collapse]                                                │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────�?
+�? MeetR  [Session Title]    [�?Recording]  [�?Stop]  [�?AI Update]�?
+├─────────────────┬───────────────────┬───────────────────────�?
+�?    AGENDA      �?  TRANSCRIPTION   �?   MANUAL NOTES       �?
+�?                �?                  �?                      �?
+�?- [ ] Item 1   �?00:01 [Spk 1]     �? (free text)          �?
+�?  - [ ] Sub    �?Hello, today...   �?                      �?
+�?- [x] Item 2   �?00:34 [Spk 2]     �?                      �?
+�?                �?We need to...     �?                      �?
+�?[+ Add item]   �?                  �?                      �?
+�?[Edit]         �?                  �?                      �?
+├─────────────────┴───────────────────┴───────────────────────�?
+�? AI SUMMARY                              Last updated: 02:34 �?
+�? Key points: ...   Decisions: ...   Open questions: ...      �?
+�? [�?Collapse]                                                �?
+└─────────────────────────────────────────────────────────────�?
 ```
 
 - **Agenda panel:** Renders markdown. Has Edit mode (raw markdown textarea) and View mode (rendered checklist). AI updates apply to the markdown source directly.
@@ -115,34 +115,34 @@ Four panels arranged as three columns on top and a full-width panel on the botto
 ### 5.1 Process Model
 
 ```
-┌────────────────────────────────────────────┐
-│               Electron App                  │
-│                                            │
-│  ┌─────────────────────────────────────┐  │
-│  │     React UI (renderer process)     │  │
-│  │  Agenda | Transcript | Notes | AI   │  │
-│  └──────────────┬──────────────────────┘  │
-│                 │ contextBridge IPC        │
-│  ┌──────────────▼──────────────────────┐  │
-│  │     Node.js (main process)          │  │
-│  │  - Session management               │  │
-│  │  - SQLite read/write                │  │
-│  │  - Claude API calls                 │  │
-│  │  - Markdown export                  │  │
-│  │  - Manages Python service process   │  │
-│  └──────────────┬──────────────────────┘  │
-└─────────────────│──────────────────────────┘
-                  │ WebSocket (localhost:8765)
-┌─────────────────▼──────────────────────────┐
-│     Python Service (separate process)       │
-│     FastAPI + WebSocket                     │
-│  - Audio capture (sounddevice / pyaudio)    │
-│  - Simultaneous WAV file write              │
-│  - VAD (silero-vad or webrtcvad)            │
-│  - Transcription (faster-whisper)           │
-│  - Speaker diarization (pyannote.audio)     │
-│  - Returns: {speaker, text, start, end}     │
-└────────────────────────────────────────────┘
+┌────────────────────────────────────────────�?
+�?              Electron App                  �?
+�?                                           �?
+�? ┌─────────────────────────────────────�? �?
+�? �?    React UI (renderer process)     �? �?
+�? �? Agenda | Transcript | Notes | AI   �? �?
+�? └──────────────┬──────────────────────�? �?
+�?                �?contextBridge IPC        �?
+�? ┌──────────────▼──────────────────────�? �?
+�? �?    Node.js (main process)          �? �?
+�? �? - Session management               �? �?
+�? �? - SQLite read/write                �? �?
+�? �? - Claude API calls                 �? �?
+�? �? - Markdown export                  �? �?
+�? �? - Manages Python service process   �? �?
+�? └──────────────┬──────────────────────�? �?
+└─────────────────│──────────────────────────�?
+                  �?WebSocket (localhost:8765)
+┌─────────────────▼──────────────────────────�?
+�?    Python Service (separate process)       �?
+�?    FastAPI + WebSocket                     �?
+�? - Audio capture (sounddevice / pyaudio)    �?
+�? - Simultaneous WAV file write              �?
+�? - VAD (silero-vad or webrtcvad)            �?
+�? - Transcription (faster-whisper)           �?
+�? - Speaker diarization (pyannote.audio)     �?
+�? - Returns: {speaker, text, start, end}     �?
+└────────────────────────────────────────────�?
 ```
 
 ### 5.2 Transcription Pipeline
@@ -156,7 +156,7 @@ Four panels arranged as three columns on top and a full-width panel on the botto
 7. Main process writes segment to SQLite and forwards to renderer via IPC.
 8. Renderer appends segment to the Transcription panel.
 
-Typical latency: **1–3 seconds** after the speaker finishes a sentence.
+Typical latency: **1�? seconds** after the speaker finishes a sentence.
 
 ### 5.3 Remote Transcription Fallback (Deepgram)
 
@@ -245,7 +245,7 @@ Your job is to:
    You may: tick completed items [x], add sub-items with detail from
    the discussion, annotate items with brief notes, reorder items to
    reflect the actual flow, or add new items that emerged in discussion.
-   Do not remove items — mark them skipped with [~] if needed.
+   Do not remove items �?mark them skipped with [~] if needed.
 
 Return your response in this exact format:
 <summary>
@@ -278,17 +278,17 @@ Each section can be exported independently to a markdown file. A full session ex
 
 ### Export file naming
 ```
-meetmate_{session_title}_{date}/
+meetr_{session_title}_{date}/
 ├── transcript.md
 ├── notes.md
 ├── agenda.md
 ├── summary.md
-└── recording.wav        ← copied from internal storage on export
+└── recording.wav        �?copied from internal storage on export
 ```
 
 ### Transcript export format
 ```markdown
-# Transcript — [Session Title]
+# Transcript �?[Session Title]
 **Date:** 2026-02-18
 **Duration:** 47 minutes
 
@@ -302,13 +302,13 @@ meetmate_{session_title}_{date}/
 
 ## 9. Development Phases
 
-### Phase 1 — Skeleton
+### Phase 1 �?Skeleton
 - [x] Scaffold Electron + React + TypeScript project
 - [x] Four-panel UI layout with placeholder content
 - [x] SQLite setup with schema
 - [x] Session create/open/list
 
-### Phase 2 — Transcription and Recording
+### Phase 2 �?Transcription and Recording
 - [x] Python service: FastAPI + WebSocket server
 - [x] RealtimeSTT + faster-whisper integration
 - [x] pyannote speaker diarization
@@ -318,12 +318,12 @@ meetmate_{session_title}_{date}/
 - [x] Transcript panel: live updates, speaker labels, renaming UI
 - [x] Recording indicator in toolbar (red dot + "Recording" label)
 
-### Phase 3 — Notes and Agenda
+### Phase 3 �?Notes and Agenda
 - [x] Manual notes auto-save
 - [x] Agenda panel: view mode (rendered markdown) and edit mode (textarea)
 - [x] Agenda persisted to SQLite
 
-### Phase 4 — AI Assistant
+### Phase 4 �?AI Assistant
 - [x] LLM Provider settings, Ollama (local), Anthropic, OpenAI, OpenRouter
 - [x] Claude API integration in main process
 - [x] Prompt construction from SQLite data
@@ -331,13 +331,13 @@ meetmate_{session_title}_{date}/
 - [x] Summary panel with streaming display
 - [x] Agenda panel auto-update from AI response
 
-### Phase 5 — Export and Polish
+### Phase 5 �?Export and Polish
 - [ ] Markdown export per section
 - [ ] Full session export
 - [ ] Speaker renaming persisted and reflected in transcript
 - [ ] Settings: transcription mode (local vs remote), model selection, HuggingFace token
 
-### Phase 6 — Packaging
+### Phase 6 �?Packaging
 - [ ] Electron auto-launch of Python service on startup
 - [ ] electron-builder packaging for Windows/macOS
 - [ ] First-run setup wizard (Python deps, HuggingFace token, API keys)
@@ -357,7 +357,7 @@ meetmate_{session_title}_{date}/
 | 3 | Real-time agenda editing conflict with AI update | If user is editing when AI update arrives, merge or prompt? |
 | 4 | Maximum session length | No hard limit; SQLite handles large transcripts fine |
 | 5 | Authentication / multi-user | Out of scope for v1; single-user local tool |
-| 6 | Accessibility of the MeetMate UI itself | Should support keyboard navigation and screen reader given the user base |
+| 6 | Accessibility of the MeetR UI itself | Should support keyboard navigation and screen reader given the user base |
 | 7 | Audio file compression after session ends | WAV during recording (no encoding overhead); optionally compress to MP3/OGG on stop to save space |
 | 8 | Audio retention policy | Should old recordings be auto-deleted after N days? Or left to the user? |
 | 9 | Synchronized transcript/audio playback | Not in v1 scope, but `start_ms` timestamps on segments make this straightforward to add later |
@@ -375,5 +375,6 @@ meetmate_{session_title}_{date}/
 | `sounddevice` | Microphone capture in Python | PortAudio system library |
 | `@anthropic-ai/sdk` | Claude API | `ANTHROPIC_API_KEY` env variable |
 | `better-sqlite3` | SQLite in Node.js | Native module, compiled with Electron |
-| `react-markdown` | Markdown rendering | — |
+| `react-markdown` | Markdown rendering | �?|
 | Deepgram SDK | Remote transcription fallback | `DEEPGRAM_API_KEY` env variable |
+

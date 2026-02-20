@@ -1,5 +1,5 @@
 {
-  "name": "meetmate",
+  "name": "meetr",
   "version": "0.1.0",
   "description": "Meeting assistant for structured in-person sessions",
   "main": "out/main/index.js",
@@ -38,8 +38,8 @@
     "ws": "^8.19.0"
   },
   "build": {
-    "appId": "com.opanabilitylabs.meetmate",
-    "productName": "MeetMate",
+    "appId": "com.opanabilitylabs.meetr",
+    "productName": "MeetR",
     "directories": {
       "output": "dist"
     },

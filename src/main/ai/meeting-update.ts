@@ -181,8 +181,8 @@ async function runOpenRouterMeetingUpdate(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://github.com/OpenAbilityLabs/MeetMate',
-      'X-Title': 'MeetMate'
+      'HTTP-Referer': 'https://github.com/OpenAbilityLabs/MeetR',
+      'X-Title': 'MeetR'
     },
     body: JSON.stringify({
       model,
@@ -330,3 +330,4 @@ function extractAssistantText(
     .map((part) => part.text as string)
     .join('\n')
 }
+

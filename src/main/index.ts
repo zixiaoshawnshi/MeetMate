@@ -22,7 +22,7 @@ function createWindow(): void {
     },
     backgroundColor: '#0a0c10',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    title: 'MeetMate'
+    title: 'MeetR'
   })
 
   // Open external links in the system browser
@@ -104,3 +104,4 @@ app.on('before-quit', (event) => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+

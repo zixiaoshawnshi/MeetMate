@@ -73,7 +73,7 @@ export function settingsFilePath(): string {
 }
 
 export function databaseFilePath(): string {
-  return join(app.getPath('userData'), 'meetmate.db')
+  return join(app.getPath('userData'), 'meetr.db')
 }
 
 export function recordingsBaseDir(settings: AppSettings = getSettings()): string {
@@ -130,3 +130,4 @@ function writeSettingsToDisk(settings: AppSettings): void {
   mkdirSync(dirname(filePath), { recursive: true })
   writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf8')
 }
+
