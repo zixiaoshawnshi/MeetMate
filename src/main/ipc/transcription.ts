@@ -1,13 +1,23 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { app } from 'electron'
 import { join } from 'path'
+import { statSync } from 'fs'
 import { getDb } from '../database'
+import { getSettings, recordingsBaseDir } from '../settings'
 import {
   startTranscriptionWs,
   stopTranscriptionWs,
-  isTranscribing
+  isTranscribing,
+  listInputDevicesWs,
+  InputDevicePayload
 } from '../transcription-client'
 import type { TranscriptSegment } from '../../renderer/src/types'
+
+let activeRecording:
+  | {
+      sessionId: number
+      startedAt: string
+    }
+  | null = null
 
 function getWebContents(): Electron.WebContents | null {
   const windows = BrowserWindow.getAllWindows()
@@ -15,7 +25,23 @@ function getWebContents(): Electron.WebContents | null {
 }
 
 function recordingsDir(sessionId: number): string {
-  return join(app.getPath('userData'), 'recordings', `session-${sessionId}`)
+  return join(recordingsBaseDir(), `session-${sessionId}`)
+}
+
+function recordingOutputPath(sessionId: number, startedAtIso: string): string {
+  const stamp = startedAtIso.replace(/[:.]/g, '-')
+  return join(recordingsDir(sessionId), `recording-${stamp}.wav`)
+}
+
+function estimateWavDurationMs(audioPath: string): number | null {
+  try {
+    const stat = statSync(audioPath)
+    const dataBytes = Math.max(0, stat.size - 44)
+    // 16kHz * 16-bit mono PCM => 32,000 bytes/second
+    return Math.round((dataBytes / 32_000) * 1000)
+  } catch {
+    return null
+  }
 }
 
 export function registerTranscriptionHandlers(): void {
@@ -25,22 +51,43 @@ export function registerTranscriptionHandlers(): void {
    */
   ipcMain.handle(
     'transcription:start',
-    async (_event, sessionId: number): Promise<{ success: boolean; error?: string }> => {
+    async (
+      _event,
+      sessionId: number,
+      inputDeviceId?: number | null
+    ): Promise<{ success: boolean; error?: string }> => {
       const wc = getWebContents()
       if (!wc) return { success: false, error: 'No renderer window' }
 
       try {
-        const outDir = recordingsDir(sessionId)
-        await startTranscriptionWs(sessionId, outDir, wc, (payload) => {
-          persistAndPushSegment(
-            sessionId,
-            payload.speaker,
-            payload.text,
-            payload.start_ms,
-            payload.end_ms,
-            wc
-          )
-        })
+        const settings = getSettings()
+        const startedAt = new Date().toISOString()
+        const outPath = recordingOutputPath(sessionId, startedAt)
+        await startTranscriptionWs(
+          sessionId,
+          outPath,
+          inputDeviceId ?? null,
+          settings.transcription.mode,
+          settings.transcription.huggingFaceToken,
+          settings.transcription.localDiarizationModelPath,
+          settings.transcription.deepgramApiKey,
+          settings.transcription.deepgramModel,
+          wc,
+          (payload) => {
+            persistAndPushSegment(
+              sessionId,
+              payload.speaker,
+              payload.text,
+              payload.start_ms,
+              payload.end_ms,
+              wc
+            )
+          }
+        )
+        activeRecording = {
+          sessionId,
+          startedAt
+        }
         return { success: true }
       } catch (err) {
         return { success: false, error: (err as Error).message }
@@ -56,22 +103,18 @@ export function registerTranscriptionHandlers(): void {
   ipcMain.handle(
     'transcription:stop',
     async (_event, sessionId: number): Promise<{ audioPath: string | null }> => {
-      const audioPath = await stopTranscriptionWs()
-
-      if (audioPath && sessionId) {
-        const db = getDb()
-        const now = new Date().toISOString()
-        db.prepare(
-          'UPDATE sessions SET audio_file_path = ?, updated_at = ? WHERE id = ?'
-        ).run(audioPath, now, sessionId)
-      }
-
+      const audioPath = await stopAndPersistRecording(sessionId)
       return { audioPath }
     }
   )
 
   /** Returns whether transcription is currently active. */
   ipcMain.handle('transcription:status', (): boolean => isTranscribing())
+
+  /** List available microphone input devices from the Python service host. */
+  ipcMain.handle('transcription:input-devices', async (): Promise<InputDevicePayload[]> => {
+    return await listInputDevicesWs()
+  })
 
   /**
    * Save an incoming segment to the DB and push it to the renderer.
@@ -107,6 +150,44 @@ export function registerTranscriptionHandlers(): void {
       ).run(newName, sessionId, speakerId)
     }
   )
+}
+
+async function stopAndPersistRecording(sessionIdHint?: number): Promise<string | null> {
+  const audioPath = await stopTranscriptionWs()
+  const now = new Date().toISOString()
+
+  const sessionId = sessionIdHint ?? activeRecording?.sessionId ?? null
+  if (audioPath && sessionId) {
+    const db = getDb()
+    db.prepare(
+      'UPDATE sessions SET audio_file_path = ?, updated_at = ? WHERE id = ?'
+    ).run(audioPath, now, sessionId)
+
+    const startedAt =
+      activeRecording && activeRecording.sessionId === sessionId
+        ? activeRecording.startedAt
+        : now
+
+    db.prepare(
+      `INSERT INTO session_recordings
+         (session_id, file_path, started_at, stopped_at, duration_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      sessionId,
+      audioPath,
+      startedAt,
+      now,
+      estimateWavDurationMs(audioPath),
+      now
+    )
+  }
+
+  activeRecording = null
+  return audioPath
+}
+
+export async function stopActiveTranscriptionForShutdown(): Promise<void> {
+  await stopAndPersistRecording()
 }
 
 /**

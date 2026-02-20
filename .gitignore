@@ -7,3 +7,5 @@ dist/
 .env
 .env.local
 python/.env
+python/models/
+python/__pycache__/

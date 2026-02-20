@@ -57,5 +57,15 @@ export function initDatabase(): void {
       model_used   TEXT NOT NULL,
       generated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS session_recordings (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id   INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      file_path    TEXT NOT NULL,
+      started_at   TEXT NOT NULL,
+      stopped_at   TEXT NOT NULL,
+      duration_ms  INTEGER,
+      created_at   TEXT NOT NULL
+    );
   `)
 }

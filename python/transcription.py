@@ -1,13 +1,15 @@
-"""
-Streaming transcription engine: sounddevice → webrtcvad → faster-whisper.
+﻿"""
+Streaming transcription engine: sounddevice -> webrtcvad -> local Whisper or Deepgram.
 
 Audio is captured in 30ms frames. VAD groups voiced frames into speech
-segments. Each segment is transcribed by faster-whisper and reported via
-the async `on_segment` callback.
+segments. Each segment is transcribed and reported via the async
+`on_segment` callback.
 """
 
 import asyncio
+import io
 import logging
+import math
 import queue
 import threading
 import time
@@ -16,6 +18,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
+import requests
 import sounddevice as sd
 import webrtcvad
 from faster_whisper import WhisperModel
@@ -24,44 +27,39 @@ from diarization import SpeakerTracker
 
 log = logging.getLogger(__name__)
 
-SAMPLE_RATE = 16_000          # Hz — required by Whisper
-FRAME_MS = 30                 # webrtcvad accepts 10 / 20 / 30 ms
-FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 480 samples
+SAMPLE_RATE = 16_000
+FRAME_MS = 30
+FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)
 
-# VAD thresholds
-VOICED_TRIGGER_MS = 200       # voiced frames needed before opening a segment
-SILENCE_CLOSE_MS = 800        # silence needed to close a segment
-PRE_SPEECH_PAD_MS = 300       # frames kept before voice is detected
-MIN_SPEECH_MS = 250           # ignore segments shorter than this
+VOICED_TRIGGER_MS = 200
+SILENCE_CLOSE_MS = 800
+PRE_SPEECH_PAD_MS = 300
+MIN_SPEECH_MS = 250
 
 
 class TranscriptionEngine:
-    """
-    Captures microphone audio, detects speech with webrtcvad, and
-    transcribes segments with faster-whisper on a background thread.
-
-    Usage
-    -----
-    engine = TranscriptionEngine(on_segment=my_async_fn)
-    engine.start(asyncio_loop)
-    ...
-    engine.stop()
-    """
-
     def __init__(
         self,
-        on_segment: Callable,           # async (speaker, text, start_ms, end_ms) -> None
+        on_segment: Callable,
         model_size: str = "base",
         vad_aggressiveness: int = 2,
         language: str = "en",
         speaker_tracker: Optional[SpeakerTracker] = None,
-        output_path: Optional[str] = None,  # full path for WAV file, or None to skip
+        output_path: Optional[str] = None,
+        input_device: Optional[int] = None,
+        transcription_mode: str = "local",
+        deepgram_api_key: str = "",
+        deepgram_model: str = "nova-2",
     ):
         self.on_segment = on_segment
         self.model_size = model_size
         self.language = language
         self._speaker_tracker = speaker_tracker
         self._output_path = output_path
+        self._input_device = input_device
+        self._transcription_mode = transcription_mode
+        self._deepgram_api_key = deepgram_api_key.strip()
+        self._deepgram_model = deepgram_model.strip() or "nova-2"
 
         self._vad = webrtcvad.Vad(vad_aggressiveness)
         self._model: Optional[WhisperModel] = None
@@ -70,28 +68,32 @@ class TranscriptionEngine:
         self._stop_event = threading.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._session_start_ms: float = 0.0
-        self.saved_audio_path: Optional[str] = None  # set when WAV is closed
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        self.saved_audio_path: Optional[str] = None
+        self._capture_thread: Optional[threading.Thread] = None
+        self._transcribe_thread: Optional[threading.Thread] = None
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
         self._stop_event.clear()
         self._session_start_ms = time.time() * 1000.0
 
-        threading.Thread(target=self._transcribe_loop, daemon=True, name="transcribe").start()
-        threading.Thread(target=self._capture_loop, daemon=True, name="capture").start()
-        log.info("TranscriptionEngine started (model=%s)", self.model_size)
+        self._transcribe_thread = threading.Thread(target=self._transcribe_loop, daemon=True, name="transcribe")
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True, name="capture")
+        self._transcribe_thread.start()
+        self._capture_thread.start()
+        log.info("TranscriptionEngine started (mode=%s)", self._transcription_mode)
 
-    def stop(self) -> None:
+    def stop(self, wait: bool = True) -> Optional[str]:
         self._stop_event.set()
         log.info("TranscriptionEngine stop requested")
+        if not wait:
+            return self.saved_audio_path
 
-    # ------------------------------------------------------------------
-    # Internal threads
-    # ------------------------------------------------------------------
+        if self._capture_thread is not None:
+            self._capture_thread.join(timeout=5.0)
+        if self._transcribe_thread is not None:
+            self._transcribe_thread.join(timeout=10.0)
+        return self.saved_audio_path
 
     def _capture_loop(self) -> None:
         wav: Optional[wave.Wave_write] = None
@@ -101,7 +103,7 @@ class TranscriptionEngine:
                 Path(self._output_path).parent.mkdir(parents=True, exist_ok=True)
                 wav = wave.open(self._output_path, "wb")
                 wav.setnchannels(1)
-                wav.setsampwidth(2)          # 16-bit PCM
+                wav.setsampwidth(2)
                 wav.setframerate(SAMPLE_RATE)
                 log.info("Recording to %s", self._output_path)
             except Exception:
@@ -122,6 +124,7 @@ class TranscriptionEngine:
                 channels=1,
                 dtype="float32",
                 blocksize=FRAME_SAMPLES,
+                device=self._input_device,
                 callback=_cb,
             ):
                 while not self._stop_event.is_set():
@@ -133,19 +136,19 @@ class TranscriptionEngine:
                 wav.close()
                 self.saved_audio_path = self._output_path
                 log.info("WAV recording saved: %s", self._output_path)
-            # Poison pill so the transcribe thread can drain and exit
             self._audio_q.put(None)
             log.info("Capture loop exited")
 
     def _transcribe_loop(self) -> None:
-        self._load_model()
+        if self._transcription_mode == "local":
+            self._load_model()
 
-        VOICED_THRESHOLD = max(1, int(VOICED_TRIGGER_MS / FRAME_MS))
-        UNVOICED_THRESHOLD = max(1, int(SILENCE_CLOSE_MS / FRAME_MS))
-        PAD_FRAMES = max(1, int(PRE_SPEECH_PAD_MS / FRAME_MS))
+        voiced_threshold = max(1, int(VOICED_TRIGGER_MS / FRAME_MS))
+        unvoiced_threshold = max(1, int(SILENCE_CLOSE_MS / FRAME_MS))
+        pad_frames = max(1, int(PRE_SPEECH_PAD_MS / FRAME_MS))
 
-        ring: list = []          # pre-speech rolling buffer
-        speech: list = []        # current speech segment frames
+        ring: list[bytes] = []
+        speech: list[bytes] = []
         triggered = False
         num_voiced = 0
         num_unvoiced = 0
@@ -153,7 +156,15 @@ class TranscriptionEngine:
 
         while True:
             frame = self._audio_q.get()
-            if frame is None:    # poison pill
+            if frame is None:
+                if triggered and speech:
+                    segment_end_ms = time.time() * 1000.0 - self._session_start_ms
+                    audio_bytes = b"".join(speech)
+                    self._transcribe_segment(
+                        audio_bytes,
+                        max(0, int(math.floor(segment_start_ms))),
+                        max(0, int(segment_end_ms)),
+                    )
                 break
 
             try:
@@ -163,14 +174,13 @@ class TranscriptionEngine:
 
             if not triggered:
                 ring.append(frame)
-                if len(ring) > PAD_FRAMES:
+                if len(ring) > pad_frames:
                     ring.pop(0)
 
                 if is_speech:
                     num_voiced += 1
-                    if num_voiced >= VOICED_THRESHOLD:
+                    if num_voiced >= voiced_threshold:
                         triggered = True
-                        # Start the segment from the beginning of the ring buffer
                         speech = list(ring)
                         ring = []
                         num_unvoiced = 0
@@ -183,12 +193,12 @@ class TranscriptionEngine:
                 else:
                     num_voiced = 0
 
-            else:  # triggered
+            else:
                 speech.append(frame)
 
                 if not is_speech:
                     num_unvoiced += 1
-                    if num_unvoiced >= UNVOICED_THRESHOLD:
+                    if num_unvoiced >= unvoiced_threshold:
                         segment_end_ms = time.time() * 1000.0 - self._session_start_ms
                         audio_bytes = b"".join(speech)
                         speech = []
@@ -206,13 +216,9 @@ class TranscriptionEngine:
 
         log.info("Transcription loop exited")
 
-    # ------------------------------------------------------------------
-    # Transcription helper
-    # ------------------------------------------------------------------
-
     def _load_model(self) -> None:
         if self._model is None:
-            log.info("Loading Whisper '%s' model (first run may download it)…", self.model_size)
+            log.info("Loading Whisper '%s' model (first run may download it)...", self.model_size)
             self._model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
             log.info("Whisper model ready")
 
@@ -222,28 +228,139 @@ class TranscriptionEngine:
 
         try:
             pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32767.0
-            segments, _ = self._model.transcribe(
-                pcm,
-                language=self.language,
-                vad_filter=False,
-                beam_size=5,
-            )
-            text = " ".join(s.text.strip() for s in segments).strip()
-            if not text:
-                return
 
-            # Speaker diarization (optional — falls back to "Speaker 1")
-            if self._speaker_tracker is not None:
-                speaker = self._speaker_tracker.assign(pcm)
+            if self._transcription_mode == "deepgram":
+                segments = self._transcribe_with_deepgram(audio_bytes, start_ms, end_ms)
+                if not segments:
+                    return
             else:
-                speaker = "Speaker 1"
+                if self._model is None:
+                    self._load_model()
+                whisper_segments, _ = self._model.transcribe(
+                    pcm,
+                    language=self.language,
+                    vad_filter=False,
+                    beam_size=5,
+                )
+                text = " ".join(s.text.strip() for s in whisper_segments).strip()
+                if not text:
+                    return
 
-            log.info("Segment [%d-%d] %s: %s", start_ms, end_ms, speaker, text)
+                if self._speaker_tracker is not None:
+                    speaker = self._speaker_tracker.assign(pcm)
+                else:
+                    speaker = "Speaker 1"
+                segments = [{
+                    "speaker": speaker,
+                    "text": text,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                }]
 
             if self._loop and self._loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    self.on_segment(speaker, text, start_ms, end_ms),
-                    self._loop,
-                )
+                for segment in segments:
+                    log.info(
+                        "Segment [%d-%d] %s: %s",
+                        segment["start_ms"],
+                        segment["end_ms"],
+                        segment["speaker"],
+                        segment["text"],
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        self.on_segment(
+                            str(segment["speaker"]),
+                            str(segment["text"]),
+                            int(segment["start_ms"]),
+                            int(segment["end_ms"]),
+                        ),
+                        self._loop,
+                    )
         except Exception:
             log.exception("Transcription segment error")
+
+    def _transcribe_with_deepgram(
+        self,
+        audio_bytes: bytes,
+        chunk_start_ms: int,
+        chunk_end_ms: int,
+    ) -> list[dict]:
+        if not self._deepgram_api_key:
+            log.warning("Deepgram mode selected but API key is missing")
+            return []
+
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(SAMPLE_RATE)
+            wav.writeframes(audio_bytes)
+
+        params = {
+            "model": self._deepgram_model,
+            "diarize": "true",
+            "utterances": "true",
+            "smart_format": "true",
+            "punctuate": "true",
+            "language": self.language,
+        }
+
+        response = requests.post(
+            "https://api.deepgram.com/v1/listen",
+            params=params,
+            headers={
+                "Authorization": f"Token {self._deepgram_api_key}",
+                "Content-Type": "audio/wav",
+            },
+            data=wav_buffer.getvalue(),
+            timeout=15,
+        )
+        response.raise_for_status()
+
+        body = response.json()
+        channel = body.get("results", {}).get("channels", [{}])[0]
+        alt = channel.get("alternatives", [{}])[0]
+        utterances = body.get("results", {}).get("utterances", [])
+        out: list[dict] = []
+        if isinstance(utterances, list) and len(utterances) > 0:
+            for utt in utterances:
+                text = str(utt.get("transcript", "")).strip()
+                if not text:
+                    continue
+                speaker_id = utt.get("speaker")
+                speaker = f"Speaker {speaker_id + 1}" if isinstance(speaker_id, int) else "Speaker 1"
+                utt_start = utt.get("start")
+                utt_end = utt.get("end")
+                start_ms = chunk_start_ms
+                end_ms = chunk_end_ms
+                if isinstance(utt_start, (int, float)):
+                    start_ms = max(chunk_start_ms, chunk_start_ms + int(float(utt_start) * 1000))
+                if isinstance(utt_end, (int, float)):
+                    end_ms = min(chunk_end_ms, chunk_start_ms + int(float(utt_end) * 1000))
+                if end_ms <= start_ms:
+                    end_ms = max(start_ms + 1, chunk_end_ms)
+                out.append({
+                    "speaker": speaker,
+                    "text": text,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                })
+
+        if out:
+            return out
+
+        text = str(alt.get("transcript", "")).strip()
+        if not text:
+            return []
+        speaker = "Speaker 1"
+        words = alt.get("words", [])
+        for word in words:
+            speaker_id = word.get("speaker")
+            if isinstance(speaker_id, int):
+                speaker = f"Speaker {speaker_id + 1}"
+                break
+        return [{
+            "speaker": speaker,
+            "text": text,
+            "start_ms": chunk_start_ms,
+            "end_ms": chunk_end_ms,
+        }]

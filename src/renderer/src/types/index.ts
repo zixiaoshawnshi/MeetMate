@@ -28,6 +28,66 @@ export interface TranscriptionState {
   error?: string
 }
 
+export interface TranscriptionInputDevice {
+  id: number
+  name: string
+  is_default: boolean
+}
+
+export interface SessionRecording {
+  id: number
+  session_id: number
+  file_path: string
+  started_at: string
+  stopped_at: string
+  duration_ms: number | null
+  created_at: string
+}
+
+export type TranscriptionMode = 'local' | 'deepgram'
+export type AiProvider = 'anthropic'
+
+export interface AppSettings {
+  version: 1
+  storage: {
+    recordingsBaseDir: string | null
+  }
+  audio: {
+    defaultInputDeviceId: number | null
+  }
+  transcription: {
+    mode: TranscriptionMode
+    huggingFaceToken: string
+    localDiarizationModelPath: string | null
+    deepgramApiKey: string
+    deepgramModel: string
+  }
+  ai: {
+    provider: AiProvider
+    anthropicApiKey: string
+  }
+}
+
+export interface AppSettingsPatch {
+  storage?: Partial<AppSettings['storage']>
+  audio?: Partial<AppSettings['audio']>
+  transcription?: Partial<AppSettings['transcription']>
+  ai?: Partial<AppSettings['ai']>
+}
+
+export interface AppPathsInfo {
+  databasePath: string
+  settingsPath: string
+  recordingsBaseDir: string
+}
+
+export type MenuAction = 'sessions' | 'settings'
+export interface DmOpResult {
+  ok: boolean
+  message: string
+  path?: string
+}
+
 export interface WindowAPI {
   session: {
     list: () => Promise<Session[]>
@@ -37,13 +97,30 @@ export interface WindowAPI {
     delete: (id: number) => Promise<void>
   }
   transcription: {
-    start: (sessionId: number) => Promise<{ success: boolean; error?: string }>
+    start: (sessionId: number, inputDeviceId?: number | null) => Promise<{ success: boolean; error?: string }>
     stop: (sessionId: number) => Promise<{ audioPath: string | null }>
     status: () => Promise<boolean>
+    inputDevices: () => Promise<TranscriptionInputDevice[]>
     segments: (sessionId: number) => Promise<TranscriptSegment[]>
     renameSpeaker: (sessionId: number, speakerId: string, newName: string) => Promise<void>
     onSegment: (cb: (segment: TranscriptSegment) => void) => () => void
     onStateChange: (cb: (state: TranscriptionState) => void) => () => void
+  }
+  recording: {
+    list: (sessionId: number) => Promise<SessionRecording[]>
+    openFile: (filePath: string) => Promise<void>
+    showInFolder: (filePath: string) => Promise<void>
+  }
+  settings: {
+    get: () => Promise<AppSettings>
+    update: (patch: AppSettingsPatch) => Promise<AppSettings>
+    pickDirectory: () => Promise<string | null>
+    paths: () => Promise<AppPathsInfo>
+    downloadDiarizationModel: () => Promise<DmOpResult>
+    validateDiarizationModel: () => Promise<DmOpResult>
+  }
+  menu: {
+    onAction: (cb: (action: MenuAction) => void) => () => void
   }
 }
 

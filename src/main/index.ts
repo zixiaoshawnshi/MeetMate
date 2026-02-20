@@ -1,8 +1,13 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, Menu, shell } from 'electron'
 import { join } from 'path'
 import { initDatabase } from './database'
 import { registerSessionHandlers } from './ipc/sessions'
-import { registerTranscriptionHandlers } from './ipc/transcription'
+import { registerRecordingHandlers } from './ipc/recordings'
+import { registerSettingsHandlers } from './ipc/settings'
+import {
+  registerTranscriptionHandlers,
+  stopActiveTranscriptionForShutdown
+} from './ipc/transcription'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -33,14 +38,64 @@ function createWindow(): void {
   }
 }
 
+function sendMenuAction(action: 'sessions' | 'settings'): void {
+  const focusedWindow = BrowserWindow.getFocusedWindow()
+  const targetWindow = focusedWindow ?? BrowserWindow.getAllWindows()[0]
+  if (!targetWindow) return
+  targetWindow.webContents.send('menu:action', action)
+}
+
+function setupApplicationMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Sessions',
+          click: () => sendMenuAction('sessions')
+        },
+        {
+          label: 'Settings',
+          click: () => sendMenuAction('settings')
+        },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    },
+    {
+      role: 'editMenu'
+    },
+    {
+      role: 'viewMenu'
+    },
+    {
+      role: 'windowMenu'
+    }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
 app.whenReady().then(() => {
   initDatabase()
   registerSessionHandlers()
+  registerRecordingHandlers()
+  registerSettingsHandlers()
   registerTranscriptionHandlers()
+  setupApplicationMenu()
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+let shuttingDown = false
+app.on('before-quit', (event) => {
+  if (shuttingDown) return
+  shuttingDown = true
+  event.preventDefault()
+  void stopActiveTranscriptionForShutdown().finally(() => {
+    app.quit()
   })
 })
 

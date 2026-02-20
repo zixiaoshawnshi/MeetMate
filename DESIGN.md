@@ -313,7 +313,7 @@ meetmate_{session_title}_{date}/
 - [x] RealtimeSTT + faster-whisper integration
 - [x] pyannote speaker diarization
 - [x] Simultaneous WAV file recording (same audio stream, written to per-session folder)
-- [ ] Consent acknowledgement dialog before first recording
+- [x] Consent acknowledgement dialog before first recording
 - [x] Electron: WebSocket client, IPC to renderer
 - [x] Transcript panel: live updates, speaker labels, renaming UI
 - [x] Recording indicator in toolbar (red dot + "Recording" label)
@@ -340,6 +340,10 @@ meetmate_{session_title}_{date}/
 - [ ] Electron auto-launch of Python service on startup
 - [ ] electron-builder packaging for Windows/macOS
 - [ ] First-run setup wizard (Python deps, HuggingFace token, API keys)
+
+### Immediate TODOs
+- [ ] Validate Deepgram diarization independently using saved session WAV files and compare with local mode outputs (speaker separation + latency + transcript quality).
+- [ ] Prototype separate transcription and diarization services (decouple speaker assignment from chunked transcription and merge by timestamps).
 
 ---
 

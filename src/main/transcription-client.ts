@@ -9,6 +9,7 @@ import { WebContents } from 'electron'
 
 const PYTHON_WS_URL = 'ws://127.0.0.1:8765/ws'
 const CONNECT_TIMEOUT_MS = 5_000
+const STOP_TIMEOUT_MS = 60_000
 
 let activeWs: WebSocket | null = null
 
@@ -17,6 +18,12 @@ export interface SegmentPayload {
   text: string
   start_ms: number
   end_ms: number
+}
+
+export interface InputDevicePayload {
+  id: number
+  name: string
+  is_default: boolean
 }
 
 /**
@@ -31,7 +38,13 @@ export interface SegmentPayload {
  */
 export function startTranscriptionWs(
   sessionId: number,
-  outputDir: string,
+  outputPath: string,
+  inputDeviceId: number | null,
+  transcriptionMode: 'local' | 'deepgram',
+  huggingFaceToken: string,
+  localDiarizationModelPath: string | null,
+  deepgramApiKey: string,
+  deepgramModel: string,
   webContents: WebContents,
   onSegment: (payload: SegmentPayload) => void
 ): Promise<void> {
@@ -57,7 +70,13 @@ export function startTranscriptionWs(
       ws.send(JSON.stringify({
         type: 'start',
         session_id: String(sessionId),
-        output_dir: outputDir
+        output_path: outputPath,
+        input_device_id: inputDeviceId,
+        transcription_mode: transcriptionMode,
+        huggingface_token: huggingFaceToken,
+        local_diarization_model_path: localDiarizationModelPath,
+        deepgram_api_key: deepgramApiKey,
+        deepgram_model: deepgramModel
       }))
     })
 
@@ -141,7 +160,7 @@ export function stopTranscriptionWs(): Promise<string | null> {
     ws.on('message', onMessage)
     ws.send(JSON.stringify({ type: 'stop' }))
 
-    // Safety timeout: resolve after 3s even if no `stopped` arrives
+    // Safety timeout: allow final transcription flush before giving up.
     setTimeout(() => {
       ws.removeListener('message', onMessage)
       if (activeWs === ws) {
@@ -149,10 +168,57 @@ export function stopTranscriptionWs(): Promise<string | null> {
         activeWs = null
       }
       resolve(null)
-    }, 3_000)
+    }, STOP_TIMEOUT_MS)
   })
 }
 
 export function isTranscribing(): boolean {
   return activeWs !== null && activeWs.readyState === WebSocket.OPEN
+}
+
+export function listInputDevicesWs(): Promise<InputDevicePayload[]> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(PYTHON_WS_URL)
+
+    const timeout = setTimeout(() => {
+      ws.removeAllListeners()
+      ws.close()
+      reject(new Error('Timed out querying transcription input devices'))
+    }, CONNECT_TIMEOUT_MS)
+
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ type: 'list_inputs' }))
+    })
+
+    ws.on('message', (raw: Buffer) => {
+      let msg: Record<string, unknown>
+      try {
+        msg = JSON.parse(raw.toString())
+      } catch {
+        return
+      }
+
+      if (msg.type === 'inputs') {
+        clearTimeout(timeout)
+        ws.close()
+        resolve((msg.devices as InputDevicePayload[] | undefined) ?? [])
+        return
+      }
+
+      if (msg.type === 'error') {
+        clearTimeout(timeout)
+        ws.close()
+        reject(new Error(String(msg.message ?? 'Unknown error from transcription service')))
+      }
+    })
+
+    ws.on('error', (err: Error) => {
+      clearTimeout(timeout)
+      reject(err)
+    })
+
+    ws.on('close', () => {
+      clearTimeout(timeout)
+    })
+  })
 }

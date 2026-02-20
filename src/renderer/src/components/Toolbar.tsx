@@ -1,22 +1,32 @@
 import { useState, useRef, useEffect } from 'react'
-import { SessionData } from '../types'
+import { SessionData, TranscriptionInputDevice } from '../types'
 
 interface ToolbarProps {
   session: SessionData | null
   recording: boolean
+  stoppingRecording: boolean
   recordError: string | null
   onTitleChange: (title: string) => void
   onRecord: () => void
-  onSessionsClick: () => void
+  onRecordingsClick: () => void
+  recordingsCount: number
+  inputDevices: TranscriptionInputDevice[]
+  selectedInputDeviceId: number | null
+  onInputDeviceChange: (deviceId: number | null) => void
 }
 
 export default function Toolbar({
   session,
   recording,
+  stoppingRecording,
   recordError,
   onTitleChange,
   onRecord,
-  onSessionsClick
+  onRecordingsClick,
+  recordingsCount,
+  inputDevices,
+  selectedInputDeviceId,
+  onInputDeviceChange
 }: ToolbarProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(session?.title ?? '')
@@ -77,6 +87,28 @@ export default function Toolbar({
 
         {/* Right-side controls */}
         <div className="flex items-center gap-2 shrink-0">
+          <label className="flex items-center gap-2 text-xs text-gray-400">
+            <span>Mic</span>
+            <select
+              value={selectedInputDeviceId ?? ''}
+              onChange={(e) => onInputDeviceChange(e.target.value ? Number(e.target.value) : null)}
+              disabled={recording || inputDevices.length === 0}
+              className="max-w-56 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-gray-200 disabled:opacity-50"
+              title={inputDevices.length === 0 ? 'No microphone input devices detected' : 'Select microphone input'}
+            >
+              {inputDevices.length === 0 ? (
+                <option value="">No inputs found</option>
+              ) : (
+                inputDevices.map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.name}
+                    {device.is_default ? ' (Default)' : ''}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
           {/* Recording state indicator */}
           <div className="flex items-center gap-1.5 text-xs select-none">
             {recording ? (
@@ -95,7 +127,7 @@ export default function Toolbar({
           {/* Record / Stop button */}
           <button
             onClick={onRecord}
-            disabled={!session}
+            disabled={!session || stoppingRecording}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
               recording
                 ? 'bg-red-900/50 border-red-700 text-red-300 hover:bg-red-900/70'
@@ -103,7 +135,7 @@ export default function Toolbar({
             } disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             <span className={`w-2 h-2 rounded-full ${recording ? 'bg-red-400 animate-pulse' : 'bg-gray-400'}`} />
-            {recording ? 'Stop' : 'Record'}
+            {stoppingRecording ? 'Finishing...' : recording ? 'Stop' : 'Record'}
           </button>
 
           {/* AI Update button — placeholder (Phase 4) */}
@@ -116,12 +148,12 @@ export default function Toolbar({
             AI Update
           </button>
 
-          {/* Sessions menu */}
           <button
-            onClick={onSessionsClick}
-            className="px-3 py-1.5 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+            onClick={onRecordingsClick}
+            disabled={!session}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Sessions
+            Recordings ({recordingsCount})
           </button>
         </div>
       </div>
